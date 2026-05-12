@@ -1,0 +1,57 @@
+#!/bin/bash
+
+NVIDIA_GPU_OPERATOR_NS=${NVIDIA_GPU_OPERATOR_NS:-nvidia-gpu-operator}
+
+function status() {
+  cat << EOF
+>>> NVIDIA GPU Cluster Policy Status:
+$(kubectl get clusterpolicy)
+
+>>> NVIDIA Driver Status:
+$(kubectl get nvidiadrivers)
+
+>>> NVIDIA Node status:
+$(kubectl get node -l nvidia.com/gpu.present -L nvidia.com/gpu.product)
+
+>>> NVIDIA Upgrade status:
+$(kubectl get node -l nvidia.com/gpu.present \
+   -ojsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.nvidia\.com/gpu-driver-upgrade-state}{"\n"}{end}'
+)
+EOF
+}
+
+function retry_upgrade() {
+  echo ">>> Retrying NVIDIA GPU upgrade on node $1"
+  set -x
+  kubectl label node "$1" nvidia.com/gpu-driver-upgrade-state=upgrade-required --overwrite --as=system:admin
+  set +x
+}
+
+function node_pods() {
+  echo ">>> NVIDIA GPU pods running on node $1"
+  kubectl get pods -o wide --namespace "$NVIDIA_GPU_OPERATOR_NS" --field-selector spec.nodeName="$1"
+}
+
+function logs() {
+  SINCE=${SINCE:-24h}
+  kubectl logs -f -n "$NVIDIA_GPU_OPERATOR_NS" -l app=gpu-operator --since="${SINCE}" --all-containers --prefix --tail=-1
+}
+
+case "$1" in
+    status)
+        status
+        ;;
+    node-pods)
+        node_pods $2
+        ;;
+    retry-upgrade)
+        retry_upgrade $2
+        ;;
+    logs)
+        logs $2
+        ;;
+    *)
+        echo "Usage: $0 {status|retry-upgrade|node-pods|logs}"
+        exit 1
+        ;;
+esac
